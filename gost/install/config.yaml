@@ -1,0 +1,10 @@
+name: install
+description: Enable boot autostart (launchd RunAtLoad) so the UDP proxy auto-starts after reboot
+type: cli
+params:
+  - name: port
+    type: number
+    description: Listen port (default 10808)
+    placeholder: "10808"
+command: 'bash "$HOME/.xcli/gost/gost-ctl.sh" install {{port_flag}}'
+passThrough: true

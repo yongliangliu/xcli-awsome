@@ -1,0 +1,3 @@
+name: warpgw
+description: WARP transparent gateway — route TV/devices to WARP at L3 (keeps QUIC), fix IPv6 leak + DNS poisoning
+version: "1.0"

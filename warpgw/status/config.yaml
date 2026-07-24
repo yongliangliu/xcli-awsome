@@ -1,0 +1,5 @@
+name: status
+description: Show state of all three components (forwarding / pf rules / RA-kill / launchd autostart / WARP iface).
+type: cli
+command: 'bash "$HOME/.xcli/warpgw/warpgw-ctl.sh" status'
+passThrough: true

@@ -1,0 +1,5 @@
+name: logs
+description: Tail the RA-kill daemon log.
+type: cli
+command: 'bash "$HOME/.xcli/warpgw/warpgw-ctl.sh" logs'
+passThrough: true

@@ -1,0 +1,5 @@
+name: uninstall
+description: Remove boot autostart (launchd) and stop/restore the gateway.
+type: cli
+command: 'sudo bash "$HOME/.xcli/warpgw/warpgw-ctl.sh" uninstall'
+passThrough: true

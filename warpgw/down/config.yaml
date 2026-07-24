@@ -1,0 +1,5 @@
+name: down
+description: Stop and fully restore (forwarding off, pf reset to system default, RA-kill stopped).
+type: cli
+command: 'sudo bash "$HOME/.xcli/warpgw/warpgw-ctl.sh" down'
+passThrough: true

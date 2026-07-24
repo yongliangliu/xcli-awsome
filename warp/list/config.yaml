@@ -1,0 +1,5 @@
+name: list
+description: Show the current WARP split-tunnel exclude list
+type: cli
+command: 'bash "$HOME/.xcli/warp/warp-cn-split-tunnel.sh" list'
+passThrough: true

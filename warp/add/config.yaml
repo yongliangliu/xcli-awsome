@@ -1,0 +1,19 @@
+name: add
+description: Import China IP ranges into the WARP split-tunnel exclude list
+type: cli
+params:
+  - name: curated
+    type: boolean
+    description: Use built-in curated major-site ranges (offline, few entries)
+  - name: file
+    type: string
+    description: Import CIDR list from a local file
+    placeholder: china_ip_list.txt
+  - name: url
+    type: string
+    description: Download CIDR list from a custom URL
+  - name: max
+    type: number
+    description: Cap number of ranges to import (avoid WARP route limit)
+command: 'bash "$HOME/.xcli/warp/warp-cn-split-tunnel.sh" add {{curated_flag}} {{file_flag}} {{url_flag}} {{max_flag}}'
+passThrough: true

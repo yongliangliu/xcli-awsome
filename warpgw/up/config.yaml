@@ -1,0 +1,5 @@
+name: up
+description: Start the transparent gateway (forwarding + pf NAT/anti-poison + RA-kill). Temporary; use install to persist.
+type: cli
+command: 'sudo bash "$HOME/.xcli/warpgw/warpgw-ctl.sh" up'
+passThrough: true

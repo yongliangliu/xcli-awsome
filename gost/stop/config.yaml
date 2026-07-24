@@ -1,0 +1,5 @@
+name: stop
+description: Stop the mixed proxy and disable launch-at-login
+type: cli
+command: 'bash "$HOME/.xcli/gost/gost-ctl.sh" stop'
+passThrough: true

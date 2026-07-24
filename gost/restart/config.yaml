@@ -1,0 +1,10 @@
+name: restart
+description: Restart the UDP-enabled mixed proxy
+type: cli
+params:
+  - name: port
+    type: number
+    description: Listen port (default 10808)
+    placeholder: "10808"
+command: 'bash "$HOME/.xcli/gost/gost-ctl.sh" restart {{port_flag}}'
+passThrough: true

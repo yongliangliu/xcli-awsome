@@ -1,0 +1,5 @@
+name: uninstall
+description: Disable boot autostart (remove launchd plist) and stop the UDP proxy
+type: cli
+command: 'bash "$HOME/.xcli/gost/gost-ctl.sh" uninstall'
+passThrough: true

@@ -1,0 +1,5 @@
+name: restart
+description: Restart the transparent gateway (restore then re-apply all three components).
+type: cli
+command: 'sudo bash "$HOME/.xcli/warpgw/warpgw-ctl.sh" restart'
+passThrough: true

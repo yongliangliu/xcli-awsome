@@ -1,0 +1,41 @@
+# ============================================================
+# WARP transparent gateway NAT rules  (apply to en0's current subnet, dynamic/adaptive; no hardcoded subnet/IP)
+# Load:    sudo pfctl -e -f warpshare.pf
+# Restore: sudo pfctl -f /etc/pf.conf   (or sudo pfctl -d to disable)
+# ============================================================
+
+# --- scrub (normalization) must come before nat (translation) ---
+scrub-anchor "com.apple/*"
+# MSS clamping: WARP tunnel MTU=1300, large forwarded TCP packets would stall, MSS must be clamped
+scrub on utun0 all max-mss 1260
+scrub on en0   all max-mss 1460
+
+# --- keep Apple system translation anchors ---
+nat-anchor "com.apple/*"
+rdr-anchor "com.apple/*"
+dummynet-anchor "com.apple/*"
+
+# (No longer using rdr to hijack DNS: macOS pf cannot rdr a forwarded packet to the
+#  host itself/loopback and deliver it locally. Instead, in the filter section we only
+#  pass "clean resolvers that egress via WARP" and block domestic DNS that gets poisoned.)
+
+# --- source address rewrite (NAT) ---
+# Traffic going through WARP: source rewritten to utun0 (172.16.0.2), sent as this host's tunnel traffic.
+# Use (en0:network) to dynamically pick the current subnet: any device pointing its gateway at this host
+# is NAT'd, and it follows automatically when the Wi-Fi/network changes -- no rule edits needed.
+nat on utun0 inet from (en0:network) to any -> (utun0)
+# Direct traffic excluded by WARP (Chinese IPs etc.): goes out en0, NAT'd to the Mac's en0 address, symmetric return
+nat on en0 inet from (en0:network) to !(en0:network) -> (en0)
+
+# --- filter anchors (keep system) ---
+# DNS anti-poisoning: first block all :53 within the subnet, then only pass "clean resolvers egressing via WARP".
+# (pf filtering defaults to last-match wins, so pass overrides the earlier block.)
+# 180.76.76.76 / 223.5.5.5 / 208.67.222.222 etc. via en0 direct get poisoned by the GFW -> dropped;
+# 1.1.1.1/1.0.0.1/8.8.8.8/8.8.4.4 all route via utun0 (WARP) on this host, cannot be poisoned inside the tunnel.
+block drop on en0 inet proto { udp tcp } from (en0:network) to any port 53
+# Allow the Mac's own DNS ((en0) dynamically picks this host's address; don't let the block above hit it)
+pass on en0 inet proto { udp tcp } from (en0) to any port 53
+pass on en0 inet proto { udp tcp } from (en0:network) to { 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4 } port 53
+
+anchor "com.apple/*"
+load anchor "com.apple" from "/etc/pf.anchors/com.apple"

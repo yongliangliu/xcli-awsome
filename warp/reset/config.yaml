@@ -1,0 +1,5 @@
+name: reset
+description: Remove all CLI-added China ranges from the WARP exclude list
+type: cli
+command: 'bash "$HOME/.xcli/warp/warp-cn-split-tunnel.sh" reset'
+passThrough: true

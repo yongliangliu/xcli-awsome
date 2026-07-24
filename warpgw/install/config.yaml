@@ -1,0 +1,5 @@
+name: install
+description: Install as boot autostart (launchd LaunchDaemon) so the gateway auto-recovers after reboot.
+type: cli
+command: 'sudo bash "$HOME/.xcli/warpgw/warpgw-ctl.sh" install'
+passThrough: true

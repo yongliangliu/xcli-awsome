@@ -1,0 +1,3 @@
+name: warp
+description: Cloudflare WARP split tunnel — skip China mainstream site IPs
+version: "1.0"

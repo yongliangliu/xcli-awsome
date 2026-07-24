@@ -1,0 +1,3 @@
+name: gost
+description: Local mixed proxy (UDP-enabled) for TVs/devices to tunnel QUIC via WARP
+version: "1.0"

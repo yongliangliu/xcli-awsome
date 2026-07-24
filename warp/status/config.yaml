@@ -1,0 +1,5 @@
+name: status
+description: Show WARP connection status and split-tunnel mode
+type: cli
+command: 'bash "$HOME/.xcli/warp/warp-cn-split-tunnel.sh" status'
+passThrough: true

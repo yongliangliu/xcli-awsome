@@ -1,0 +1,5 @@
+name: status
+description: Show proxy running state, port, PID and whether UDP is enabled
+type: cli
+command: 'bash "$HOME/.xcli/gost/gost-ctl.sh" status'
+passThrough: true
