@@ -5,3 +5,9 @@
 # macOS junk
 .DS_Store
 **/.DS_Store
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+# Backup files (alternatives preserved in git history)
+*.bak

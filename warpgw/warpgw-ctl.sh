@@ -7,8 +7,8 @@
 # Three parts are toggled together by this script:
 #   1) IPv4 forwarding         sysctl net.inet.ip.forwarding=1
 #   2) pf rules warpshare.pf   NAT to WARP + MSS clamping + DNS anti-poisoning (block local resolvers)
-#   3) RA-kill daemon ra-kill.sh  uses ipv6toolkit `ra6` to send a Router Lifetime=0
-#                                 RA to all-nodes, dropping every device's IPv6 default route
+#   3) RA-kill daemon ra-kill.sh  uses Python/scapy to L2-unicast a RouterLifetime=0 RA
+#                                 to each gateway client's MAC, dropping its IPv6 default route
 #
 # Commands: up | down | restart | status | install | uninstall | logs
 #   up/down/restart/install/uninstall require root (xcli invokes them via sudo)
@@ -42,46 +42,40 @@ need_root(){
   fi
 }
 
-# --- locate ra6 (ipv6toolkit); it lives in sbin, not always on PATH under launchd ---
-find_ra6(){
+# --- locate a python3 that has scapy ---
+find_py(){
   local p
-  for p in "$(command -v ra6 2>/dev/null)" /usr/local/sbin/ra6 /opt/homebrew/sbin/ra6; do
-    [ -n "$p" ] && [ -x "$p" ] && { echo "$p"; return 0; }
+  for p in "$(command -v python3 2>/dev/null)" \
+           /opt/homebrew/bin/python3 \
+           /usr/local/bin/python3 \
+           /Library/Frameworks/Python.framework/Versions/Current/bin/python3; do
+    [ -n "$p" ] && [ -x "$p" ] && "$p" -c "import scapy" >/dev/null 2>&1 && { echo "$p"; return 0; }
   done
   return 1
 }
 
-# --- locate brew (runs as the invoking user, never as root) ---
-find_brew(){
-  local p
-  for p in "$(command -v brew 2>/dev/null)" /usr/local/bin/brew /opt/homebrew/bin/brew; do
-    [ -n "$p" ] && [ -x "$p" ] && { echo "$p"; return 0; }
-  done
-  return 1
-}
-
-# --- ensure ipv6toolkit (ra6) is present, auto-install via Homebrew if missing ---
-ensure_ra6(){
-  if find_ra6 >/dev/null; then c_ok "ra6 present ($(find_ra6))"; return 0; fi
-  c_dim "ra6 not found -> installing ipv6toolkit via Homebrew ..."
-  local brew_bin run_user
-  brew_bin="$(find_brew)" || { c_bad "Homebrew not found. Install ipv6toolkit manually: brew install ipv6toolkit"; exit 1; }
-  # Homebrew refuses to run as root; run as the user who invoked sudo
+# --- ensure python3 + scapy are present, auto-install scapy if missing ---
+ensure_scapy(){
+  if find_py >/dev/null; then c_ok "python3+scapy : $(find_py)"; return 0; fi
+  c_dim "scapy not found -> attempting: python3 -m pip install scapy ..."
+  local py run_user
+  py="$(command -v python3 2>/dev/null)" || py="/usr/local/bin/python3"
   run_user="${SUDO_USER:-$(id -un)}"
-  if ! sudo -u "$run_user" "$brew_bin" install ipv6toolkit; then
-    c_bad "brew install ipv6toolkit failed (try manually as your user: brew install ipv6toolkit)"; exit 1
+  if sudo -u "$run_user" "$py" -m pip install --user scapy 2>/dev/null; then
+    find_py >/dev/null && { c_ok "scapy installed ($(find_py))"; return 0; }
   fi
-  find_ra6 >/dev/null && c_ok "ipv6toolkit installed ($(find_ra6))" || { c_bad "ra6 still not found after install"; exit 1; }
+  c_bad "scapy not installed. Install manually: python3 -m pip install scapy"
+  exit 1
 }
 
 check_prereq(){
   [ -f "$PF_RULES" ] || { c_bad "pf rules not found: $PF_RULES"; exit 1; }
   [ -f "$RAKILL" ]   || { c_bad "RA-kill not found: $RAKILL"; exit 1; }
-  find_ra6 >/dev/null || { c_bad "ra6 not found. Run: sudo xcli warpgw install  (or: brew install ipv6toolkit)"; exit 1; }
+  find_py >/dev/null || { c_bad "python3+scapy not found. Run: sudo xcli warpgw install  (or: python3 -m pip install scapy)"; exit 1; }
 }
 
 # --- RA-kill process helpers ---
-rakill_pid(){ pgrep -f "[r]a-kill.sh" 2>/dev/null | head -1; }
+rakill_pid(){ pgrep -f "[r]a-kill\.py" 2>/dev/null | head -1; }
 
 start_rakill(){
   if [ -n "$(rakill_pid)" ]; then
@@ -96,9 +90,8 @@ start_rakill(){
 
 stop_rakill(){
   local p; p="$(rakill_pid)"
-  pkill -f "[r]a-kill.sh" 2>/dev/null
-  pkill -f "[r]a-kill.py" 2>/dev/null   # stop legacy Python daemon when migrating
-  pkill -x ra6            2>/dev/null
+  pkill -f "[r]a-kill\.py" 2>/dev/null
+  pkill -f "[r]a-kill\.sh" 2>/dev/null
   sleep 1
   if [ -n "$p" ]; then c_ok "RA-kill stopped"; else c_dim "RA-kill not running"; fi
   rm -f "$PIDFILE"
@@ -167,7 +160,7 @@ case "$CMD" in
   install)
     need_root
     c_hd "* Installing auto-start on boot (launchd: $PLIST_LABEL)"
-    ensure_ra6            # auto-install ipv6toolkit (ra6) if missing
+    ensure_scapy            # auto-install python3/scapy if missing
     check_prereq
     cat >"$PLIST" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -224,7 +217,7 @@ PLISTEOF
     elif pfctl -s info 2>/dev/null | grep -q "Status: Enabled"; then
       if pfctl -s nat 2>/dev/null | grep -q "nat on ${WARP_IF}"; then c_ok "pf rules        : loaded (NAT to WARP + DNS anti-poisoning)"; else c_bad "pf rules        : pf enabled but gateway NAT rule not found"; fi
     else c_bad "pf rules        : pf not enabled"; fi
-    if find_ra6 >/dev/null; then c_ok "ra6 (ipv6toolkit): $(find_ra6)"; else c_bad "ra6 (ipv6toolkit): not installed (run: sudo xcli warpgw install)"; fi
+    if find_py >/dev/null; then c_ok "python3+scapy   : $(find_py)"; else c_bad "python3+scapy   : not found (run: python3 -m pip install scapy)"; fi
     p="$(rakill_pid)"; [ -n "$p" ] && c_ok "RA-kill daemon  : running (pid $p)" || c_bad "RA-kill daemon  : not running"
     if [ -f "$PLIST" ]; then c_ok "Auto-start      : installed (launchd)"; else c_dim "Auto-start      : not installed (temporary mode, lost on reboot)"; fi
     ifconfig "$WARP_IF" >/dev/null 2>&1 && c_ok "WARP interface  : $WARP_IF online" || c_bad "WARP interface  : $WARP_IF missing (WARP not connected?)"
@@ -238,7 +231,7 @@ Usage: xcli warpgw <command>
   down        Stop and restore (forwarding / pf / RA-kill all reverted)                           [needs sudo]
   restart     Restart                                                                             [needs sudo]
   status      Show current status (pf item needs sudo to be visible)
-  install     Install as auto-start on boot (launchd); also auto-installs ipv6toolkit if missing  [needs sudo]
+  install     Install as auto-start on boot (launchd); also auto-installs scapy if missing        [needs sudo]
   uninstall   Uninstall auto-start and stop                                                       [needs sudo]
   logs        Show RA-kill logs
 EOF

@@ -27,7 +27,7 @@ But layer-3 forwarding exposes two "leak" problems, which are solved as well:
 
 | Problem | Symptom | Fix |
 |---------|---------|-----|
-| **IPv6 leak** | The device has an IPv6 default route (from the router's RA), goes out over v6 directly, bypassing Mac/WARP, and gets poisoned by the GFW | `ra-kill.sh`: uses the mature `ipv6toolkit` tool `ra6` to impersonate the real router and send an RA with `RouterLifetime=0`, removing every device's v6 default route and forcing an IPv4 fallback |
+| **IPv6 leak** | The device has an IPv6 default route (from the router's RA), goes out over v6 directly, bypassing Mac/WARP, and gets poisoned by the GFW | `ra-kill.py` (Python/scapy): L2-unicasts a spoofed RA with `RouterLifetime=0` + `RDNSS lifetime=0` to each gateway client's MAC, reliably removing its v6 default route and DNS |
 | **DNS poisoning** | The device uses a domestic DNS (or the router's DNS); direct `:53` gets poisoned and YouTube resolves to fake IPs | `pf` blocks all client `:53` and only allows clean resolvers that egress via WARP (1.1.1.1 / 8.8.8.8 etc.) |
 
 ---
@@ -37,18 +37,18 @@ But layer-3 forwarding exposes two "leak" problems, which are solved as well:
 This domain uses one control script (`warpgw-ctl.sh`) to toggle three parts together:
 
 ```
-   +-------------+  point gateway at Mac  +---------------- Mac ------------------+
-   |   client    | ---------------------> | (1) IPv4 forwarding  forwarding=1     |
-   | (TV/phone/  |                        | (2) pf rules         warpshare.pf     |--> WARP(utun0) --> Internet
-   |     PC)     | <--------------------- | (3) RA-kill          ra-kill.sh + ra6 |
-   +-------------+  IPv6 fake RA (drop default route) +-----------------------------+
+   +-------------+  point gateway at Mac  +----------------------- Mac ----------------------+
+   |   client    | ---------------------> | (1) IPv4 forwarding  forwarding=1               |
+   | (TV/phone/  |                        | (2) pf rules         warpshare.pf               |--> WARP(utun0) --> Internet
+   |     PC)     | <--------------------- | (3) RA-kill          ra-kill.sh -> ra-kill.py    |
+   +-------------+  IPv6 fake RA (drop default route) +----------------------------------------+
 ```
 
 1. **IPv4 forwarding** -- `sysctl net.inet.ip.forwarding=1`, lets the Mac forward packets not addressed to itself.
 2. **pf rules** (`warpshare.pf`) -- NAT to WARP + MSS clamping (avoids large packets being dropped) + DNS anti-poisoning.
-3. **RA-kill daemon** (`ra-kill.sh`) -- a thin loop around `ipv6toolkit`'s `ra6`, sending a `RouterLifetime=0` RA to all-nodes to suppress IPv6 default routes.
+3. **RA-kill daemon** (`ra-kill.py`, launched via `ra-kill.sh`) -- Python/scapy, L2-unicasts a `RouterLifetime=0` + `RDNSS lifetime=0` RA to each gateway client's device MAC to suppress IPv6 default routes.
 
-### Key design: nothing about the device / subnet / router is hardcoded
+### Key design: auto-discovered, per-device L2-unicast
 
 The whole logic **adapts automatically to changes of network, device, and
 router** without editing any file:
@@ -56,16 +56,19 @@ router** without editing any file:
 - **pf uses dynamic interface syntax**: source addresses use `(en0:network)`
   (en0's current subnet), and the local pass uses `(en0)` (this host's current
   address). pf resolves them at runtime, so it follows a Wi-Fi change automatically.
-- **RA-kill needs no per-device discovery**:
-  - Real router LL -> read at runtime from the default route in
-    `netstat -rn -f inet6` (**must** use the real router LL as `ra6 -s` source,
-    otherwise `lifetime=0` cancels a nonexistent router and the real default
-    route is not removed). Re-read every cycle, so it follows a network change.
-  - The kill-RA is sent to `ff02::1` (all-nodes), so **every** device on the
-    segment drops its IPv6 default route -- this inherently covers intermittent
-    devices (phones) with no discovery or per-device state. Trade-off: other LAN
-    devices that do not use the Mac also lose their IPv6 default route (they keep
-    working over IPv4).
+- **RA-kill auto-discovers gateway clients** (no hardcoded MAC/device list):
+  - Gateway clients -> read from `pfctl -s states` (any local IP with an
+    external connection is a gateway user). Combined with ARP to resolve MAC.
+  - Real router LL -> read at runtime from `netstat -rn -f inet6`, supplemented
+    by a live RA sniffer thread that mirrors the real router's RDNSS. Re-read
+    every cycle, so it follows a network change.
+  - **L2-unicast delivery**: each RA is sent with `Ether(dst=<device MAC>)`.
+    On Wi-Fi, multicast (33:33:00:00:00:01) is sent at the lowest rate with
+    no ACK/retry, so sleepy devices (Android TV) miss it. L2-unicast is ACKed,
+    retransmitted, and delivered at normal rate -- this is the key to making
+    the Android TV reliably drop its v6 route.
+  - Sticky TTL: once a device MAC is seen, it keeps being targeted for 10
+    minutes even if its pf states briefly disappear, to avoid IPv6 flapping.
 
 ---
 
@@ -76,7 +79,8 @@ router** without editing any file:
 ├── config.yaml          domain metadata (auto-discovered by xcli)
 ├── warpgw-ctl.sh        control script (the real body of every command)
 ├── warpshare.pf         pf rules (NAT + MSS + DNS anti-poisoning)
-├── ra-kill.sh           IPv6 suppression daemon (ipv6toolkit / ra6, no Python)
+├── ra-kill.sh           launcher for ra-kill.py (locates python3+scapy, exec)
+├── ra-kill.py           RA-kill daemon (Python/scapy, L2-unicast per device)
 ├── rakill.log           RA-kill runtime log
 └── <subcommand>/config.yaml  up down restart status install uninstall logs
 ```
@@ -90,9 +94,9 @@ router** without editing any file:
 | `xcli warpgw up` | Start the gateway (forwarding + pf + RA-kill), temporary mode | sudo |
 | `xcli warpgw down` | Stop and restore to system default | sudo |
 | `xcli warpgw restart` | Reload (use after changing rules / script) | sudo |
-| `xcli warpgw install` | Install as auto-start on boot (launchd); also auto-installs `ipv6toolkit` if missing | sudo |
+| `xcli warpgw install` | Install as auto-start on boot (launchd); also auto-installs `scapy` if missing | sudo |
 | `xcli warpgw uninstall` | Uninstall auto-start and stop | sudo |
-| `xcli warpgw status` | Show forwarding / pf / ra6 / RA-kill / auto-start / WARP status | sudo recommended |
+| `xcli warpgw status` | Show forwarding / pf / python / RA-kill / auto-start / WARP status | sudo recommended |
 | `xcli warpgw logs` | Show RA-kill logs | — |
 
 > `up` is temporary (lost on reboot); use `install` for a lasting setup.
@@ -124,14 +128,14 @@ sudo xcli warpgw status
 
 # 2) Check whether RA-kill is sending suppression RAs
 xcli warpgw logs
-#   Typical output: round N: router_ll=fe80::1 (RA lifetime=0 -> all-nodes)
+#   Typical output: round N: router_ll=fe80::1 rdnss=[...] active=1 targeted=2
 ```
 
 Common issues:
 
 - **A device is still stuck / cannot open** -> confirm its gateway really points at the Mac; in `status`, pf, forwarding and WARP are all "on/online".
-- **YouTube resolves to a weird IP (poisoned)** -> confirm the device's DNS is set to 1.1.1.1 / 8.8.8.8, and that `ra6` + the RA-kill daemon are shown running in `status`.
-- **`ra6` not installed** -> run `sudo xcli warpgw install` (auto-installs `ipv6toolkit`), or `brew install ipv6toolkit` manually.
+- **YouTube resolves to a weird IP (poisoned)** -> confirm the device's DNS is set to 1.1.1.1 / 8.8.8.8, and that the RA-kill daemon is shown running in `status`.
+- **`scapy` not installed** -> run `sudo xcli warpgw install` (auto-installs), or `python3 -m pip install scapy` manually.
 - **The WARP interface is not called utun0** -> see "Assumptions & limitations" below.
 
 ---
@@ -146,12 +150,10 @@ Common issues:
 - **Relies on the Cloudflare WARP client** being connected with a `utun0` default
   route in the routing table (which Chinese IPs go direct is decided by WARP's
   own split table, see `xcli warp`).
-- **Requires root**: forwarding, pf, and sending raw RA frames all need root, so
-  up/down/restart/install/uninstall go through sudo.
-- **ipv6toolkit (`ra6`)**: required by RA-kill, installed via Homebrew
-  (`brew install ipv6toolkit`). `install` auto-installs it if missing. No Python
-  dependency. `ra6` is a macOS-native, actively-maintained tool (SI6 Networks);
-  note that `thc-ipv6` is Linux-only and does not work on macOS.
+- **Requires root**: forwarding, pf, and sending raw packets (scapy) all need root,
+  so up/down/restart/install/uninstall go through sudo.
+- **Python 3 + scapy**: required by RA-kill. `install` auto-installs scapy via pip
+  if missing. No special system dependencies beyond a working python3.
 
 ---
 
