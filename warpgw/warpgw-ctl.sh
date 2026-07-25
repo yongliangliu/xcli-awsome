@@ -68,6 +68,35 @@ ensure_scapy(){
   exit 1
 }
 
+# --- optional local DNS cache: install/configure/start dnsmasq (non-fatal on failure) ---
+find_brew(){
+  local b
+  for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$b" ] && { echo "$b"; return 0; }; done
+  return 1
+}
+ensure_dnsmasq(){
+  local brew run_user conf_src conf_dst
+  brew="$(find_brew)" || { c_dim "dnsmasq       : skipped (Homebrew not found; optional DNS cache)"; return 0; }
+  run_user="${SUDO_USER:-$(id -un)}"
+  conf_src="$DIR/dnsmasq.conf"
+  conf_dst="$("$brew" --prefix)/etc/dnsmasq.conf"
+  # install if missing (brew refuses to run as root -> run as the invoking user)
+  if ! [ -x "$("$brew" --prefix)/opt/dnsmasq/sbin/dnsmasq" ] && ! command -v dnsmasq >/dev/null 2>&1; then
+    c_dim "dnsmasq not found -> attempting: brew install dnsmasq ..."
+    sudo -u "$run_user" "$brew" install dnsmasq >/dev/null 2>&1 || { c_dim "dnsmasq       : brew install failed (optional, skipped)"; return 0; }
+  fi
+  # deploy our config if repo copy exists and differs
+  if [ -f "$conf_src" ] && ! cmp -s "$conf_src" "$conf_dst" 2>/dev/null; then
+    cp "$conf_src" "$conf_dst" && c_ok "dnsmasq config deployed -> $conf_dst"
+  fi
+  # (re)start as root service so it can bind :53
+  if "$brew" services restart dnsmasq >/dev/null 2>&1; then
+    c_ok "dnsmasq       : running (local DNS cache on ${LAN_IF}:53)"
+  else
+    c_dim "dnsmasq       : failed to start (optional; try: sudo brew services restart dnsmasq)"
+  fi
+}
+
 check_prereq(){
   [ -f "$PF_RULES" ] || { c_bad "pf rules not found: $PF_RULES"; exit 1; }
   [ -f "$RAKILL" ]   || { c_bad "RA-kill not found: $RAKILL"; exit 1; }
@@ -161,6 +190,7 @@ case "$CMD" in
     need_root
     c_hd "* Installing auto-start on boot (launchd: $PLIST_LABEL)"
     ensure_scapy            # auto-install python3/scapy if missing
+    ensure_dnsmasq          # auto-install/start optional local DNS cache
     check_prereq
     cat >"$PLIST" <<PLISTEOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -221,6 +251,7 @@ PLISTEOF
     p="$(rakill_pid)"; [ -n "$p" ] && c_ok "RA-kill daemon  : running (pid $p)" || c_bad "RA-kill daemon  : not running"
     if [ -f "$PLIST" ]; then c_ok "Auto-start      : installed (launchd)"; else c_dim "Auto-start      : not installed (temporary mode, lost on reboot)"; fi
     ifconfig "$WARP_IF" >/dev/null 2>&1 && c_ok "WARP interface  : $WARP_IF online" || c_bad "WARP interface  : $WARP_IF missing (WARP not connected?)"
+    if pgrep -x dnsmasq >/dev/null 2>&1; then c_ok "dnsmasq cache   : running (clients may use this Mac as DNS)"; else c_dim "dnsmasq cache   : not running (optional; installed by: sudo xcli warpgw install)"; fi
     echo; client_help
     ;;
 
@@ -231,7 +262,7 @@ Usage: xcli warpgw <command>
   down        Stop and restore (forwarding / pf / RA-kill all reverted)                           [needs sudo]
   restart     Restart                                                                             [needs sudo]
   status      Show current status (pf item needs sudo to be visible)
-  install     Install as auto-start on boot (launchd); also auto-installs scapy if missing        [needs sudo]
+  install     Install as auto-start on boot (launchd); auto-installs scapy + dnsmasq if missing   [needs sudo]
   uninstall   Uninstall auto-start and stop                                                       [needs sudo]
   logs        Show RA-kill logs
 EOF
