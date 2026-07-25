@@ -27,8 +27,14 @@ nat on utun0 inet from (en0:network) to any -> (utun0)
 # Direct traffic excluded by WARP (Chinese IPs etc.): goes out en0, NAT'd to the Mac's en0 address, symmetric return
 nat on en0 inet from (en0:network) to !(en0:network) -> (en0)
 
-# --- filter anchors (keep system) ---
-# DNS anti-poisoning: first block all :53 within the subnet, then only pass "clean resolvers egressing via WARP".
+# --- filter: block known HTTPDNS services that bypass :53 ---
+# Android TV uses Alibaba HTTPDNS (203.107.1.0/24) over HTTP:80, circumventing the :53 block.
+# This causes 100+ stuck TCP connections (LAST_ACK/FIN_WAIT1), exhausting the device's connection pool
+# and degrading YouTube performance. Block it so the TV falls back to standard DNS (1.1.1.1 via WARP).
+block drop quick on en0 inet from (en0:network) to 203.107.1.0/24
+
+# --- filter: DNS anti-poisoning ---
+# First block all :53 within the subnet, then only pass "clean resolvers egressing via WARP".
 # (pf filtering defaults to last-match wins, so pass overrides the earlier block.)
 # 180.76.76.76 / 223.5.5.5 / 208.67.222.222 etc. via en0 direct get poisoned by the GFW -> dropped;
 # 1.1.1.1/1.0.0.1/8.8.8.8/8.8.4.4 all route via utun0 (WARP) on this host, cannot be poisoned inside the tunnel.
