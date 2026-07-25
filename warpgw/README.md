@@ -79,6 +79,7 @@ router** without editing any file:
 ├── config.yaml          domain metadata (auto-discovered by xcli)
 ├── warpgw-ctl.sh        control script (the real body of every command)
 ├── warpshare.pf         pf rules (NAT + MSS + DNS anti-poisoning)
+├── dnsmasq.conf         optional local DNS cache (deploy to /usr/local/etc/dnsmasq.conf)
 ├── ra-kill.sh           launcher for ra-kill.py (locates python3+scapy, exec)
 ├── ra-kill.py           RA-kill daemon (Python/scapy, L2-unicast per device)
 ├── rakill.log           RA-kill runtime log
@@ -109,8 +110,9 @@ On the device you want proxied, change the network to **static / manual** and se
 
 - **Gateway / Router** -> this Mac's en0 address
   (find it with: `ipconfig getifaddr en0`)
-- **DNS** -> `1.1.1.1` or `8.8.8.8`
-  (`:53` to other DNS is blocked by pf; these two egress via WARP, clean and unpoisoned)
+- **DNS** -> the Mac's en0 address (fastest: local dnsmasq cache, <5ms repeated lookups),
+  or `1.1.1.1` / `8.8.8.8` (~500ms per lookup through the WARP tunnel).
+  `:53` to any other DNS is refused by pf (`block return`, so clients fail over instantly).
 
 Once set, the device's traffic is taken over automatically, and within ~3s
 RA-kill also suppresses its IPv6 leak. **No per-device configuration is needed
@@ -137,6 +139,24 @@ Common issues:
 - **YouTube resolves to a weird IP (poisoned)** -> confirm the device's DNS is set to 1.1.1.1 / 8.8.8.8, and that the RA-kill daemon is shown running in `status`.
 - **`scapy` not installed** -> run `sudo xcli warpgw install` (auto-installs), or `python3 -m pip install scapy` manually.
 - **The WARP interface is not called utun0** -> see "Assumptions & limitations" below.
+- **First connection is slow on Huawei/Honor devices** -> their `dnscure` probes domestic DNS
+  (180.76.76.76 / 223.5.5.5) before the configured one. pf uses `block return` (not silent drop)
+  exactly so this probe fails instantly instead of stalling ~2s per lookup.
+
+### Optional: local DNS cache (dnsmasq)
+
+Every uncached lookup travels the WARP tunnel (~500ms). A local dnsmasq on the Mac
+caches answers so repeated lookups return in <5ms:
+
+```bash
+brew install dnsmasq
+cp ~/.xcli/warpgw/dnsmasq.conf /usr/local/etc/dnsmasq.conf
+sudo brew services restart dnsmasq
+# then point the client device's DNS at the Mac's en0 address
+```
+
+pf already passes LAN -> Mac:53, and dnsmasq forwards upstream to 1.1.1.1/8.8.8.8
+(both egress via WARP, so answers stay unpoisoned).
 
 ---
 

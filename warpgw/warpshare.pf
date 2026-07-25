@@ -31,17 +31,22 @@ nat on en0 inet from (en0:network) to !(en0:network) -> (en0)
 # Android TV uses Alibaba HTTPDNS (203.107.1.0/24) over HTTP:80, circumventing the :53 block.
 # This causes 100+ stuck TCP connections (LAST_ACK/FIN_WAIT1), exhausting the device's connection pool
 # and degrading YouTube performance. Block it so the TV falls back to standard DNS (1.1.1.1 via WARP).
-block drop quick on en0 inet from (en0:network) to 203.107.1.0/24
+block return quick on en0 inet from (en0:network) to 203.107.1.0/24
 
 # --- filter: DNS anti-poisoning ---
 # First block all :53 within the subnet, then only pass "clean resolvers egressing via WARP".
+# Use "return" (not "drop"): Huawei/Android dnscure probes domestic DNS (180.76.76.76/223.5.5.5) first;
+# a silent drop makes the TV wait ~2s timeout per lookup, "return" sends ICMP-unreach so it fails over instantly.
 # (pf filtering defaults to last-match wins, so pass overrides the earlier block.)
 # 180.76.76.76 / 223.5.5.5 / 208.67.222.222 etc. via en0 direct get poisoned by the GFW -> dropped;
 # 1.1.1.1/1.0.0.1/8.8.8.8/8.8.4.4 all route via utun0 (WARP) on this host, cannot be poisoned inside the tunnel.
-block drop on en0 inet proto { udp tcp } from (en0:network) to any port 53
+block return on en0 inet proto { udp tcp } from (en0:network) to any port 53
 # Allow the Mac's own DNS ((en0) dynamically picks this host's address; don't let the block above hit it)
 pass on en0 inet proto { udp tcp } from (en0) to any port 53
 pass on en0 inet proto { udp tcp } from (en0:network) to { 1.1.1.1, 1.0.0.1, 8.8.8.8, 8.8.4.4 } port 53
+# Allow LAN clients to query the local dnsmasq cache on this host ((en0) = this host's address).
+# dnsmasq caches upstream answers (1.1.1.1/8.8.8.8 via WARP), cutting repeated lookups from ~500ms to <5ms.
+pass on en0 inet proto { udp tcp } from (en0:network) to (en0) port 53
 
 anchor "com.apple/*"
 load anchor "com.apple" from "/etc/pf.anchors/com.apple"
